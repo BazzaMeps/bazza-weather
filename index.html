@@ -1091,6 +1091,32 @@ body.theme-neon .hum-big { color: var(--accent2); text-shadow: 0 0 14px var(--ac
 body.theme-paper .footer { border-top: 2px solid var(--border-hi); border-left: none; border-right: none; border-bottom: none; text-align: center; justify-content: center; }
 body.theme-minimal .footer { border: 3px solid #000; box-shadow: 3px 3px 0 #000; }
 
+.units-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.units-btn {
+  padding: 5px 14px;
+  border: 2px solid var(--border-hi);
+  background: var(--surface2);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: var(--radius);
+  transition: all 0.15s;
+  letter-spacing: 1px;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+.units-btn:hover { background: var(--border-hi); color: var(--bg); box-shadow: var(--glow); }
+body.theme-minimal .units-btn { border: 3px solid #000; box-shadow: 3px 3px 0 #000; }
+body.theme-minimal .units-btn:hover { box-shadow: 1px 1px 0 #000; transform: translate(2px,2px); }
+
 /* ═══════════════════════════════════════════
    SHOULD I PANEL
 ═══════════════════════════════════════════ */
@@ -1379,6 +1405,9 @@ body.theme-minimal .pollutant-item { border: 2px solid #000; }
     <button class="theme-btn" data-theme="paper" onclick="setTheme('paper')">📰 Paper</button>
     <button class="theme-btn" data-theme="neon" onclick="setTheme('neon')">🌆 Neon Tokyo</button>
     <button class="theme-btn" data-theme="minimal" onclick="setTheme('minimal')">◻ Minimal</button>
+    <div class="units-toggle">
+      <button class="units-btn" id="unitsBtn" onclick="toggleUnits()">°C · km/h · mm</button>
+    </div>
   </div>
 
   <!-- HEADER -->
@@ -1640,7 +1669,7 @@ body.theme-minimal .pollutant-item { border: 2px solid #000; }
           <div class="wave-visual">
             <div class="wave-fill" id="waveFill" style="height:30%"></div>
             <div class="wave-height-val" id="waveHeightVal">--</div>
-            <div class="wave-unit">m</div>
+            <div class="wave-unit" id="waveUnit">m</div>
           </div>
           <div class="marine-stats">
             <div class="wind-stat-row"><span style="color:var(--text-dim)">Wave height</span><span style="color:var(--accent2)" id="marWaveH">--</span></div>
@@ -1721,6 +1750,33 @@ function updateClock() {
 setInterval(updateClock, 1000);
 updateClock();
 
+// ── Units system ──
+let useMetric = localStorage.getItem('bazza-weather-units') !== 'imperial';
+let _lastWeatherData = null; // cache for re-render on unit switch
+
+function toggleUnits() {
+  useMetric = !useMetric;
+  localStorage.setItem('bazza-weather-units', useMetric ? 'metric' : 'imperial');
+  updateUnitsBtn();
+  if (_lastWeatherData) renderWeather(_lastWeatherData.d, _lastWeatherData.name);
+}
+
+function updateUnitsBtn() {
+  el('unitsBtn').textContent = useMetric ? '°C · km/h · mm' : '°F · mph · in';
+}
+
+// Conversion helpers
+const toTemp  = c  => useMetric ? `${Math.round(c)}°C`       : `${Math.round(c * 9/5 + 32)}°F`;
+const toTempN = c  => useMetric ? Math.round(c)               : Math.round(c * 9/5 + 32);
+const toSpeed = k  => useMetric ? `${Math.round(k)} km/h`     : `${Math.round(k * 0.621371)} mph`;
+const toVis   = k  => useMetric ? `${(k/1000).toFixed(1)} km` : `${(k/1000 * 0.621371).toFixed(1)} mi`;
+const toPrecip= mm => useMetric ? `${mm.toFixed(1)} mm`       : `${(mm * 0.0393701).toFixed(2)} in`;
+const toWave  = m  => useMetric ? `${m.toFixed(1)} m`         : `${(m * 3.28084).toFixed(1)} ft`;
+const toWaveN = m  => useMetric ? `${m.toFixed(1)}`           : `${(m * 3.28084).toFixed(1)}`;
+const toWaveU = () => useMetric ? 'm' : 'ft';
+const tempUnit= () => useMetric ? '°C' : '°F';
+const speedUnit=() => useMetric ? 'km/h' : 'mph';
+
 // ── WMO codes ──
 const WMO = {
   0:{icon:'☀️',desc:'Clear Sky'},1:{icon:'🌤️',desc:'Mainly Clear'},2:{icon:'⛅',desc:'Partly Cloudy'},
@@ -1797,28 +1853,30 @@ async function fetchWeather(lat, lon, name) {
 }
 
 function renderWeather(d, name) {
+  _lastWeatherData = { d, name }; // cache for unit switching
+  updateUnitsBtn();
   const c = d.current, daily = d.daily, hourly = d.hourly;
 
   // Current
   const w = wmo(c.weather_code);
   el('curIcon').textContent = w.icon;
-  el('curTemp').textContent = `${Math.round(c.temperature_2m)}°`;
-  el('curFeels').textContent = `Feels like ${Math.round(c.apparent_temperature)}°C`;
+  el('curTemp').textContent = toTemp(c.temperature_2m);
+  el('curFeels').textContent = `Feels like ${toTemp(c.apparent_temperature)}`;
   el('curDesc').textContent = w.desc;
   el('curHum').textContent = `${c.relative_humidity_2m}%`;
-  el('curWind').textContent = `${Math.round(c.wind_speed_10m)} km/h`;
+  el('curWind').textContent = toSpeed(c.wind_speed_10m);
   el('curPress').textContent = `${Math.round(c.surface_pressure)} hPa`;
-  el('curVis').textContent = c.visibility ? `${(c.visibility/1000).toFixed(1)} km` : 'N/A';
+  el('curVis').textContent = c.visibility ? toVis(c.visibility) : 'N/A';
   el('curUV').textContent = (c.uv_index||0).toFixed(1);
   el('curCloud').textContent = `${c.cloud_cover}%`;
-  el('curWetBulb').textContent = c.wet_bulb_temperature_2m !== undefined ? `${Math.round(c.wet_bulb_temperature_2m)}°C` : 'N/A';
-  el('curPrecip').textContent = c.precipitation !== undefined ? `${c.precipitation} mm` : '0 mm';
+  el('curWetBulb').textContent = c.wet_bulb_temperature_2m !== undefined ? toTemp(c.wet_bulb_temperature_2m) : 'N/A';
+  el('curPrecip').textContent = c.precipitation !== undefined ? toPrecip(c.precipitation) : toPrecip(0);
 
   // Wind compass
   const deg = c.wind_direction_10m;
   el('compassNeedle').style.transform = `translateX(-50%) translateY(-100%) rotate(${deg}deg)`;
-  el('windSpeed').textContent = `${Math.round(c.wind_speed_10m)} km/h`;
-  el('windGusts').textContent = `${Math.round(c.wind_gusts_10m)} km/h`;
+  el('windSpeed').textContent = toSpeed(c.wind_speed_10m);
+  el('windGusts').textContent = toSpeed(c.wind_gusts_10m);
   el('windDir').textContent = windDir(deg);
   el('windBearing').textContent = `${deg}°`;
 
@@ -1874,7 +1932,7 @@ function renderWeather(d, name) {
 
   // Dew point
   const dew = hourly.dewpoint_2m ? hourly.dewpoint_2m[0] : null;
-  el('dewVal').textContent = dew !== null ? `${Math.round(dew)}°C` : '--';
+  el('dewVal').textContent = dew !== null ? toTemp(dew) : '--';
 
   // Solar radiation
   const solar = hourly.shortwave_radiation ? hourly.shortwave_radiation[0] : null;
@@ -1901,13 +1959,13 @@ function renderWeather(d, name) {
   }
 
   // Today at a glance
-  el('todayHi').textContent = `${Math.round(daily.temperature_2m_max[0])}°C`;
-  el('todayLo').textContent = `${Math.round(daily.temperature_2m_min[0])}°C`;
-  el('todayFeelsHi').textContent = daily.apparent_temperature_max ? `${Math.round(daily.apparent_temperature_max[0])}°C` : '--';
-  el('todayFeelsLo').textContent = daily.apparent_temperature_min ? `${Math.round(daily.apparent_temperature_min[0])}°C` : '--';
+  el('todayHi').textContent = toTemp(daily.temperature_2m_max[0]);
+  el('todayLo').textContent = toTemp(daily.temperature_2m_min[0]);
+  el('todayFeelsHi').textContent = daily.apparent_temperature_max ? toTemp(daily.apparent_temperature_max[0]) : '--';
+  el('todayFeelsLo').textContent = daily.apparent_temperature_min ? toTemp(daily.apparent_temperature_min[0]) : '--';
   el('todayRain').textContent = `${daily.precipitation_probability_max[0]}%`;
-  el('todayMM').textContent = daily.precipitation_sum ? `${daily.precipitation_sum[0].toFixed(1)} mm` : '--';
-  el('todaySnow').textContent = daily.snowfall_sum ? `${daily.snowfall_sum[0].toFixed(1)} cm` : '0 cm';
+  el('todayMM').textContent = daily.precipitation_sum ? toPrecip(daily.precipitation_sum[0]) : toPrecip(0);
+  el('todaySnow').textContent = daily.snowfall_sum ? toPrecip(daily.snowfall_sum[0]) : toPrecip(0);
   el('todaySeaPress').textContent = `${Math.round(c.surface_pressure)} hPa`;
 
   // Hourly
@@ -1926,9 +1984,9 @@ function renderWeather(d, name) {
     cell.innerHTML = `
       <div class="hour-time">${isNow ? 'NOW' : hourly.time[i].substring(11,16)}</div>
       <div class="hour-icon">${hw.icon}</div>
-      <div class="hour-temp">${Math.round(hourly.temperature_2m[i])}°</div>
+      <div class="hour-temp">${toTempN(hourly.temperature_2m[i])}°</div>
       <div class="hour-rain">${hourly.precipitation_probability[i] !== undefined ? hourly.precipitation_probability[i]+'%' : ''}</div>
-      <div class="hour-precip">${rain !== null && rain > 0 ? rain.toFixed(1)+'mm' : ''}</div>
+      <div class="hour-precip">${rain !== null && rain > 0 ? toPrecip(rain) : ''}</div>
     `;
     track.appendChild(cell);
   }
@@ -1949,9 +2007,9 @@ function renderWeather(d, name) {
   for (let i = 0; i < daily.time.length; i++) {
     const date = new Date(daily.time[i] + 'T12:00:00');
     const dw = wmo(daily.weather_code[i]);
-    const hi = Math.round(allMax[i]), lo = Math.round(allMin[i]);
+    const hi = toTempN(allMax[i]), lo = toTempN(allMin[i]);
     const pct = ((allMax[i] - globalMin) / gRange * 100).toFixed(0);
-    const mm = daily.precipitation_sum ? daily.precipitation_sum[i].toFixed(1) : '--';
+    const mm = daily.precipitation_sum ? toPrecip(daily.precipitation_sum[i]) : '--';
     const row = document.createElement('div');
     row.className = 'day-row' + (i === 0 ? ' today' : '');
     row.innerHTML = `
@@ -1961,7 +2019,7 @@ function renderWeather(d, name) {
       <div class="day-hi">${hi}°</div>
       <div class="day-lo">${lo}°</div>
       <div class="day-rain">${daily.precipitation_probability_max[i]}%</div>
-      <div class="day-mm">${mm}mm</div>
+      <div class="day-mm">${mm}</div>
     `;
     fcast.appendChild(row);
   }
@@ -2005,41 +2063,47 @@ function renderShouldI(c, daily, hourly) {
   const vis      = c.visibility ? c.visibility / 1000 : 10;
   const wcode    = c.weather_code;
   const cape     = c.cape || 0;
-  const daylightSecs = daily.daylight_duration ? daily.daylight_duration[0] : 43200;
   const sunHrs   = daily.sunshine_duration ? daily.sunshine_duration[0] / 3600 : 0;
-  const isStormy = [95,96,99].includes(wcode);
+
+  // Unit-aware display values for reason strings
+  const fTemp  = v => toTemp(v);
+  const fSpeed = v => toSpeed(v);
+  const fRain  = v => toPrecip(v);
+  const fVis   = v => toVis(v * 1000);
+
+  const isStormy  = [95,96,99].includes(wcode);
   const isRaining = rainPct > 60 || rainMM > 3 || [61,63,65,80,81,82].includes(wcode);
   const isSnowing = snow > 0.5 || [71,73,75,77,85,86].includes(wcode);
-  const isFoggy  = [45,48].includes(wcode) || vis < 1;
-  const isWindy  = windKph > 40 || gustKph > 55;
-  const isHot    = feels >= 25;
-  const isCold   = feels < 5;
-  const isNice   = !isRaining && !isStormy && temp >= 14 && temp <= 26 && windKph < 30 && !isFoggy;
+  const isFoggy   = [45,48].includes(wcode) || vis < 1;
+  const isWindy   = windKph > 40 || gustKph > 55;
+  const isHot     = feels >= 25;
+  const isCold    = feels < 5;
+  const isNice    = !isRaining && !isStormy && temp >= 14 && temp <= 26 && windKph < 30 && !isFoggy;
 
   const cards = [
     {
       emoji: '☂️', label: 'Take an umbrella?',
       ...(isStormy  ? { verdict:'YES', cls:'yes', reason:`Thunderstorms forecast. Don't leave home without one.` }
-        : isRaining ? { verdict:'YES', cls:'yes', reason:`${rainPct}% rain chance, ${rainMM.toFixed(1)}mm expected.` }
+        : isRaining ? { verdict:'YES', cls:'yes', reason:`${rainPct}% rain chance, ${fRain(rainMM)} expected.` }
         : rainPct > 35 ? { verdict:'MAYBE', cls:'maybe', reason:`${rainPct}% chance of rain — worth keeping handy.` }
         : { verdict:'NO', cls:'no', reason:`Low rain risk today. Leave it at home.` })
     },
     {
       emoji: '🚗', label: 'Drive carefully?',
       ...(isStormy  ? { verdict:'CAUTION', cls:'yes', reason:'Thunderstorm risk. Reduce speed, increase distance.' }
-        : isSnowing ? { verdict:'YES', cls:'yes', reason:`${snow.toFixed(1)}cm snow. Allow extra time and take care.` }
-        : isFoggy   ? { verdict:'YES', cls:'yes', reason:`Fog reducing visibility to ~${vis.toFixed(1)}km.` }
+        : isSnowing ? { verdict:'YES', cls:'yes', reason:`${fRain(snow)} snow. Allow extra time and take care.` }
+        : isFoggy   ? { verdict:'YES', cls:'yes', reason:`Fog reducing visibility to ~${fVis(vis)}.` }
         : isRaining && rainMM > 5 ? { verdict:'CAUTION', cls:'maybe', reason:'Heavy rain — wet roads, reduced visibility.' }
-        : isWindy   ? { verdict:'CAUTION', cls:'maybe', reason:`Gusts to ${Math.round(gustKph)} km/h. Watch on exposed roads.` }
+        : isWindy   ? { verdict:'CAUTION', cls:'maybe', reason:`Gusts to ${fSpeed(gustKph)}. Watch on exposed roads.` }
         : { verdict:'FINE', cls:'no', reason:'No significant driving hazards today.' })
     },
     {
       emoji: '🍖', label: 'Have a BBQ?',
       ...(isStormy  ? { verdict:'NO', cls:'no', reason:'Thunderstorms expected. Absolutely not.' }
-        : isRaining ? { verdict:'NO', cls:'no', reason:`Too wet — ${rainMM.toFixed(1)}mm expected.` }
-        : isWindy   ? { verdict:'MAYBE', cls:'maybe', reason:`Winds to ${Math.round(windKph)} km/h — could be tricky.` }
-        : isCold    ? { verdict:'MAYBE', cls:'maybe', reason:`Only ${Math.round(feels)}°C — a bit nippy for outdoor dining!` }
-        : isNice    ? { verdict:'YES', cls:'yes', reason:`${Math.round(temp)}°C and ${cloud < 50 ? 'mostly sunny' : 'cloudy but dry'}. Get the coals lit!` }
+        : isRaining ? { verdict:'NO', cls:'no', reason:`Too wet — ${fRain(rainMM)} expected.` }
+        : isWindy   ? { verdict:'MAYBE', cls:'maybe', reason:`Winds to ${fSpeed(windKph)} — could be tricky.` }
+        : isCold    ? { verdict:'MAYBE', cls:'maybe', reason:`Only ${fTemp(feels)} — a bit nippy for outdoor dining!` }
+        : isNice    ? { verdict:'YES', cls:'yes', reason:`${fTemp(temp)} and ${cloud < 50 ? 'mostly sunny' : 'cloudy but dry'}. Get the coals lit!` }
         : { verdict:'MAYBE', cls:'maybe', reason:`Conditions are acceptable. Keep an eye on the sky.` })
     },
     {
@@ -2048,19 +2112,19 @@ function renderShouldI(c, daily, hourly) {
         : isSnowing ? { verdict:'NO', cls:'no', reason:'Snow on the ground — slippery conditions.' }
         : isFoggy   ? { verdict:'NO', cls:'no', reason:'Poor visibility is dangerous for cycling.' }
         : isWindy && isRaining ? { verdict:'NO', cls:'no', reason:'Wet and windy — not worth it today.' }
-        : isWindy   ? { verdict:'MAYBE', cls:'maybe', reason:`${Math.round(windKph)} km/h winds will make it hard work.` }
+        : isWindy   ? { verdict:'MAYBE', cls:'maybe', reason:`${fSpeed(windKph)} winds will make it hard work.` }
         : isRaining ? { verdict:'MAYBE', cls:'maybe', reason:`Rain expected — pack waterproofs if you must.` }
-        : isCold    ? { verdict:'MAYBE', cls:'maybe', reason:`${Math.round(feels)}°C — layer up and it's doable.` }
-        : { verdict:'YES', cls:'yes', reason:`Good conditions — ${Math.round(temp)}°C with manageable winds.` })
+        : isCold    ? { verdict:'MAYBE', cls:'maybe', reason:`${fTemp(feels)} — layer up and it's doable.` }
+        : { verdict:'YES', cls:'yes', reason:`Good conditions — ${fTemp(temp)} with manageable winds.` })
     },
     {
       emoji: '👕', label: 'Hang washing out?',
-      ...(isRaining ? { verdict:'NO', cls:'no', reason:`Rain expected (${rainMM.toFixed(1)}mm). Use the dryer.` }
+      ...(isRaining ? { verdict:'NO', cls:'no', reason:`Rain expected (${fRain(rainMM)}). Use the dryer.` }
         : isStormy  ? { verdict:'NO', cls:'no', reason:'Storm risk — it will end up in next door\'s garden.' }
         : rainPct > 50 ? { verdict:'NO', cls:'no', reason:`${rainPct}% rain chance. Not worth the risk.` }
         : isFoggy   ? { verdict:'NO', cls:'no', reason:'High humidity and fog — clothes won\'t dry.' }
-        : windKph > 10 && !isWindy && !isRaining ? { verdict:'YES', cls:'yes', reason:`${Math.round(windKph)} km/h breeze and dry — perfect drying conditions.` }
-        : isWindy   ? { verdict:'MAYBE', cls:'maybe', reason:`Dry but very windy (${Math.round(windKph)} km/h) — peg them down well.` }
+        : windKph > 10 && !isWindy && !isRaining ? { verdict:'YES', cls:'yes', reason:`${fSpeed(windKph)} breeze and dry — perfect drying conditions.` }
+        : isWindy   ? { verdict:'MAYBE', cls:'maybe', reason:`Dry but very windy (${fSpeed(windKph)}) — peg them down well.` }
         : rainPct < 20 ? { verdict:'YES', cls:'yes', reason:`Low rain risk and dry conditions. Good to go.` }
         : { verdict:'MAYBE', cls:'maybe', reason:`${rainPct}% rain chance — worth the gamble if you're around to bring them in.` })
     },
@@ -2073,28 +2137,28 @@ function renderShouldI(c, daily, hourly) {
     },
     {
       emoji: '🧥', label: 'Wear a coat?',
-      ...(feels < 0  ? { verdict:'YES', cls:'yes', reason:`Feels like ${Math.round(feels)}°C. Heavy coat, hat, gloves — the works.` }
-        : feels < 8  ? { verdict:'YES', cls:'yes', reason:`Feels like ${Math.round(feels)}°C — proper coat needed.` }
-        : feels < 14 ? { verdict:'MAYBE', cls:'maybe', reason:`${Math.round(feels)}°C — a light jacket or layer is wise.` }
-        : feels < 20 ? { verdict:'MAYBE', cls:'maybe', reason:`${Math.round(feels)}°C — could get away without one.` }
-        : { verdict:'NO', cls:'no', reason:`${Math.round(feels)}°C — leave the coat at home.` })
+      ...(feels < 0  ? { verdict:'YES', cls:'yes', reason:`Feels like ${fTemp(feels)}. Heavy coat, hat, gloves — the works.` }
+        : feels < 8  ? { verdict:'YES', cls:'yes', reason:`Feels like ${fTemp(feels)} — proper coat needed.` }
+        : feels < 14 ? { verdict:'MAYBE', cls:'maybe', reason:`${fTemp(feels)} — a light jacket or layer is wise.` }
+        : feels < 20 ? { verdict:'MAYBE', cls:'maybe', reason:`${fTemp(feels)} — could get away without one.` }
+        : { verdict:'NO', cls:'no', reason:`${fTemp(feels)} — leave the coat at home.` })
     },
     {
       emoji: '🏃', label: 'Run/walk outside?',
       ...(isStormy  ? { verdict:'NO', cls:'no', reason:'Lightning risk. Exercise indoors today.' }
         : isSnowing ? { verdict:'MAYBE', cls:'maybe', reason:'Snow on ground — slippery. Tread carefully.' }
         : isFoggy   ? { verdict:'MAYBE', cls:'maybe', reason:'Low visibility. Wear hi-vis if going out.' }
-        : isRaining && rainMM > 5 ? { verdict:'MAYBE', cls:'maybe', reason:`Heavy rain (${rainMM.toFixed(1)}mm). Waterproofs essential.` }
+        : isRaining && rainMM > 5 ? { verdict:'MAYBE', cls:'maybe', reason:`Heavy rain (${fRain(rainMM)}). Waterproofs essential.` }
         : uv >= 8 && sunHrs > 4  ? { verdict:'MAYBE', cls:'maybe', reason:`Very high UV. Go early morning or evening.` }
-        : isNice    ? { verdict:'YES', cls:'yes', reason:`Great conditions — ${Math.round(feels)}°C and ${isRaining ? 'light rain only' : 'dry'}.` }
+        : isNice    ? { verdict:'YES', cls:'yes', reason:`Great conditions — ${fTemp(feels)} and dry.` }
         : { verdict:'YES', cls:'yes', reason:`Reasonable conditions for outdoor exercise.` })
     },
     {
       emoji: '🪟', label: 'Open the windows?',
       ...(isStormy  ? { verdict:'NO', cls:'no', reason:'Thunderstorm risk — keep them shut.' }
         : isRaining && rainMM > 2 ? { verdict:'NO', cls:'no', reason:'Rain coming in — keep closed.' }
-        : isCold    ? { verdict:'MAYBE', cls:'maybe', reason:`${Math.round(temp)}°C outside — briefly for fresh air.` }
-        : isHot     ? { verdict:'YES', cls:'yes', reason:`${Math.round(temp)}°C — open up for airflow.` }
+        : isCold    ? { verdict:'MAYBE', cls:'maybe', reason:`${fTemp(temp)} outside — briefly for fresh air.` }
+        : isHot     ? { verdict:'YES', cls:'yes', reason:`${fTemp(temp)} — open up for airflow.` }
         : isNice    ? { verdict:'YES', cls:'yes', reason:'Pleasant outside — let the fresh air in.' }
         : { verdict:'MAYBE', cls:'maybe', reason:'Up to you — conditions are acceptable.' })
     },
@@ -2394,15 +2458,14 @@ function renderMarine(d) {
   // Wave fill visual (max ~4m = 100%)
   const fillPct = waveH !== null ? Math.min(waveH / 4 * 100, 100) : 10;
   el('waveFill').style.height = `${fillPct}%`;
-  el('waveHeightVal').textContent = waveH !== null ? waveH.toFixed(1) : '--';
-
-  el('marWaveH').textContent    = fmt(waveH, 1, ' m');
-  el('marSwellH').textContent   = fmt(swellH, 1, ' m');
+  el('waveHeightVal').textContent = waveH !== null ? toWaveN(waveH) : '--';
+  el('marWaveH').textContent    = waveH !== null ? toWave(waveH) : '--';
+  el('marSwellH').textContent   = swellH !== null ? toWave(swellH) : '--';
   el('marSwellP').textContent   = fmt(swellP, 0, ' sec');
-  el('marWindWave').textContent = fmt(windWave, 1, ' m');
+  el('marWindWave').textContent = windWave !== null ? toWave(windWave) : '--';
   el('marWavePeriod').textContent = fmt(wavePer, 0, ' sec');
   el('marCurrent').textContent  = 'N/A';
-  el('marSeaTemp').textContent  = seaTemp !== null && seaTemp !== undefined ? `${seaTemp.toFixed(1)}°C` : '--';
+  el('marSeaTemp').textContent  = seaTemp !== null && seaTemp !== undefined ? toTemp(seaTemp) : '--';
 
   // Swell direction compass
   if (swellDir !== null && swellDir !== undefined) {
@@ -2420,6 +2483,9 @@ function renderMarine(d) {
   const vLabel  = el('marineVerdictLabel');
   const vReason = el('marineVerdictReason');
 
+  // Update wave unit label
+  el('waveUnit').textContent = toWaveU();
+
   if (waveH === null || waveH === undefined) {
     verdict.className = 'marine-verdict caution';
     vIcon.textContent = '🌊';
@@ -2429,22 +2495,22 @@ function renderMarine(d) {
     verdict.className = 'marine-verdict poor';
     vIcon.textContent = '⛔';
     vLabel.textContent = 'Rough — small craft warning';
-    vReason.textContent = `Waves at ${waveH.toFixed(1)}m${swellH ? ` with ${swellH.toFixed(1)}m swell` : ''}. Not suitable for small vessels.`;
+    vReason.textContent = `Waves at ${toWave(waveH)}${swellH ? ` with ${toWave(swellH)} swell` : ''}. Not suitable for small vessels.`;
   } else if (waveH >= 1.25) {
     verdict.className = 'marine-verdict caution';
     vIcon.textContent = '⚠️';
     vLabel.textContent = 'Moderate — experienced mariners only';
-    vReason.textContent = `${waveH.toFixed(1)}m waves${wavePer ? ` at ${wavePer.toFixed(0)}s period` : ''}. Take care on the water.`;
+    vReason.textContent = `${toWave(waveH)} waves${wavePer ? ` at ${wavePer.toFixed(0)}s period` : ''}. Take care on the water.`;
   } else if (waveH >= 0.5) {
     verdict.className = 'marine-verdict caution';
     vIcon.textContent = '⛵';
     vLabel.textContent = 'Slight swell — generally manageable';
-    vReason.textContent = `${waveH.toFixed(1)}m wave height. Suitable for most recreational use with care.`;
+    vReason.textContent = `${toWave(waveH)} wave height. Suitable for most recreational use with care.`;
   } else {
     verdict.className = 'marine-verdict good';
     vIcon.textContent = '⚓';
     vLabel.textContent = 'Calm — great conditions on the water';
-    vReason.textContent = `${waveH.toFixed(1)}m waves${wavePer ? ` — ${wavePer.toFixed(0)}s period` : ''}. Excellent for boating.`;
+    vReason.textContent = `${toWave(waveH)} waves${wavePer ? ` — ${wavePer.toFixed(0)}s period` : ''}. Excellent for boating.`;
   }
 }
 
