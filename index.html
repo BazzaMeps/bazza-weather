@@ -1635,7 +1635,7 @@ body.theme-minimal .pollutant-item { border: 2px solid #000; }
       </div>
 
       <div class="panel">
-        <div class="panel-title">// Marine Forecast — <span style="font-size:0.85em;color:var(--text-dim)">Thames Estuary</span></div>
+        <div class="panel-title">// Marine Forecast — <span id="marinePanelSub" style="font-size:0.85em;color:var(--text-dim)">Thames Estuary</span></div>
         <div class="marine-hero">
           <div class="wave-visual">
             <div class="wave-fill" id="waveFill" style="height:30%"></div>
@@ -2243,56 +2243,136 @@ function renderAirQuality(d) {
   }
 }
 
+// ── Nearest coastal fallback points ──
+// Used when marine API returns no wave data for an inland/estuarine location
+const COASTAL_FALLBACKS = [
+  // UK & Ireland
+  { name: 'Thames Estuary',     lat: 51.50, lon:  0.60  }, // Shoeburyness
+  { name: 'Solent',             lat: 50.75, lon: -1.30  }, // Southampton Water mouth
+  { name: 'North Sea (Humber)', lat: 53.65, lon:  0.10  }, // Spurn Head
+  { name: 'Irish Sea',          lat: 53.40, lon: -4.80  }, // Anglesey
+  { name: 'English Channel',    lat: 50.10, lon: -0.70  }, // Brighton
+  { name: 'North Sea (Tyne)',   lat: 55.00, lon:  1.45  }, // Tyneside coast
+  { name: 'Firth of Forth',     lat: 56.10, lon: -2.70  }, // East Lothian
+  { name: 'Bristol Channel',    lat: 51.30, lon: -3.20  }, // Weston-super-Mare
+  // Europe
+  { name: 'Bay of Biscay',      lat: 46.20, lon: -2.30  },
+  { name: 'North Sea (NL)',     lat: 52.10, lon:  4.30  },
+  { name: 'Baltic Sea',         lat: 54.50, lon: 10.90  },
+  { name: 'Mediterranean',      lat: 43.30, lon:  5.40  }, // Marseille
+  // Americas
+  { name: 'Atlantic (NY)',      lat: 40.60, lon: -73.90 }, // NYC coast
+  { name: 'Pacific (LA)',       lat: 33.70, lon:-118.30 },
+  { name: 'Gulf of Mexico',     lat: 29.50, lon: -94.80 },
+  // Asia/Pacific
+  { name: 'Pacific (Tokyo)',    lat: 35.60, lon: 140.80 },
+  { name: 'South China Sea',    lat: 22.30, lon: 114.20 },
+  // Australia
+  { name: 'Tasman Sea',         lat:-33.90, lon: 151.30 },
+];
+
+function nearestCoastal(lat, lon) {
+  let best = COASTAL_FALLBACKS[0], bestDist = Infinity;
+  for (const pt of COASTAL_FALLBACKS) {
+    const d = Math.hypot(pt.lat - lat, pt.lon - lon);
+    if (d < bestDist) { bestDist = d; best = pt; }
+  }
+  return best;
+}
+
 // ── Marine ──
-async function fetchMarine(lat, lon) {
-  // Try primary marine domain, fall back to main domain if CORS/network fails
-  const buildUrl = (base) => `${base}/v1/marine?latitude=${lat}&longitude=${lon}`
+async function fetchMarine(lat, lon, fallbackLabel) {
+  // Show loading state immediately
+  el('marineVerdictLabel').textContent = 'Loading marine data...';
+  el('marineVerdictReason').textContent = 'Contacting marine-api.open-meteo.com';
+  el('marineVerdict').className = 'marine-verdict caution';
+
+  const buildUrl = (base, mlat, mlon) => `${base}/v1/marine?latitude=${mlat}&longitude=${mlon}`
     + `&hourly=wave_height,wave_direction,wave_period,wind_wave_height,wind_wave_direction,swell_wave_height,swell_wave_direction,swell_wave_period,sea_surface_temperature`
     + `&timezone=auto&forecast_days=3`;
 
-  const tryFetch = async (url) => {
-    const res = await fetch(url);
-    const d = await res.json();
-    return { res, d };
+  const tryFetch = async (url, timeoutMs) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      const d = await res.json();
+      clearTimeout(timer);
+      return { res, d };
+    } catch(e) {
+      clearTimeout(timer);
+      throw e;
+    }
   };
 
-  let res, d;
-  try {
-    ({ res, d } = await tryFetch(buildUrl('https://marine-api.open-meteo.com')));
-  } catch(e) {
-    // Fallback to main API domain
+  const doFetch = async (mlat, mlon) => {
+    let res, d;
     try {
-      ({ res, d } = await tryFetch(buildUrl('https://api.open-meteo.com')));
-    } catch(e2) {
-      console.error('Marine API both domains failed:', e, e2);
+      ({ res, d } = await tryFetch(buildUrl('https://marine-api.open-meteo.com', mlat, mlon), 20000));
+    } catch(e) {
+      try {
+        el('marineVerdictReason').textContent = 'Trying fallback endpoint...';
+        ({ res, d } = await tryFetch(buildUrl('https://api.open-meteo.com', mlat, mlon), 20000));
+      } catch(e2) {
+        const isTimeout = e2.name === 'AbortError' || e.name === 'AbortError';
+        el('marineVerdictLabel').textContent = 'Marine data unavailable';
+        el('marineVerdictReason').textContent = isTimeout
+          ? 'Request timed out — marine API may be temporarily slow.'
+          : `Could not reach marine API: ${e2.message}`;
+        return null;
+      }
+    }
+    if (d.error || d.error_type || !res.ok) {
       el('marineVerdictLabel').textContent = 'Marine data unavailable';
-      el('marineVerdictReason').textContent = `Network error — both API endpoints unreachable.`;
+      el('marineVerdictReason').textContent = d.reason || d.error_message || `API error (${res.status})`;
+      return null;
+    }
+    // Check if wave data actually exists and has values
+    if (!d.hourly || !d.hourly.wave_height || !Array.isArray(d.hourly.wave_height)) return null;
+    const hasData = d.hourly.wave_height.some(v => v !== null && v !== undefined);
+    if (!hasData) return null;
+    return d;
+  };
+
+  // First try the actual location
+  let data = await doFetch(lat, lon);
+
+  // If no wave data, try nearest coastal fallback
+  if (!data) {
+    const coastal = nearestCoastal(lat, lon);
+    el('marineVerdictLabel').textContent = 'Loading marine data...';
+    el('marineVerdictReason').textContent = `No data at this location — trying ${coastal.name}...`;
+    data = await doFetch(coastal.lat, coastal.lon);
+    if (data) {
+      // Flag that we're showing coastal proxy data
+      data._proxyName = coastal.name;
+    } else {
+      el('marineVerdictLabel').textContent = 'Marine data unavailable';
+      el('marineVerdictReason').textContent = 'Location is outside all marine model coverage.';
       return;
     }
   }
 
-  if (d.error || d.error_type || !res.ok) {
-    const msg = d.reason || d.error_message || `API error (${res.status})`;
-    el('marineVerdictLabel').textContent = 'Marine data unavailable';
-    el('marineVerdictReason').textContent = msg;
-    return;
-  }
-  if (!d.hourly || !d.hourly.wave_height) {
-    el('marineVerdictLabel').textContent = 'No marine data';
-    el('marineVerdictReason').textContent = 'Location is outside marine model coverage (likely inland).';
-    return;
-  }
-  renderMarine(d);
+  renderMarine(data);
 }
 
 function renderMarine(d) {
   const h = d.hourly;
-  // Safety net — if hourly is missing or wave_height array is absent
+  // Safety net
   if (!h || !h.wave_height || !Array.isArray(h.wave_height)) {
     console.warn('Marine API response missing expected fields:', d);
     el('marineVerdictLabel').textContent = 'No marine data';
     el('marineVerdictReason').textContent = 'Location is likely inland or outside marine model coverage.';
     return;
+  }
+
+  // Update subtitle if using a proxy coastal location
+  if (d._proxyName) {
+    el('marinePanelSub').textContent = `Nearest coast: ${d._proxyName}`;
+    el('marinePanelSub').style.color = 'var(--accent1)';
+  } else {
+    el('marinePanelSub').textContent = 'Local data';
+    el('marinePanelSub').style.color = 'var(--text-dim)';
   }
 
   // Use first non-null value from today's hourly data
@@ -2365,79 +2445,6 @@ function renderMarine(d) {
     vIcon.textContent = '⚓';
     vLabel.textContent = 'Calm — great conditions on the water';
     vReason.textContent = `${waveH.toFixed(1)}m waves${wavePer ? ` — ${wavePer.toFixed(0)}s period` : ''}. Excellent for boating.`;
-  }
-}
-
-function renderMarine(d) {
-  const c = d.current;
-  const fmt = (v, dp=1, unit='') => v !== undefined && v !== null ? `${v.toFixed(dp)}${unit}` : '--';
-
-  const waveH = c.wave_height;
-  const swellH = c.swell_wave_height;
-  const swellP = c.swell_wave_period;
-  const swellDir = c.swell_wave_direction;
-  const waveDir = c.wave_direction;
-  const wavePeriod = c.wave_period;
-  const windWave = c.wind_wave_height;
-  const current = c.ocean_current_speed;
-
-  // Wave fill visual (max ~4m = 100%)
-  const fillPct = waveH !== null && waveH !== undefined ? Math.min(waveH / 4 * 100, 100) : 30;
-  el('waveFill').style.height = `${fillPct}%`;
-  el('waveHeightVal').textContent = waveH !== null && waveH !== undefined ? waveH.toFixed(1) : '--';
-
-  el('marWaveH').textContent    = fmt(waveH, 1, ' m');
-  el('marSwellH').textContent   = fmt(swellH, 1, ' m');
-  el('marSwellP').textContent   = fmt(swellP, 0, ' sec');
-  el('marWindWave').textContent = fmt(windWave, 1, ' m');
-  el('marWavePeriod').textContent = fmt(wavePeriod, 0, ' sec');
-  el('marCurrent').textContent  = current !== undefined && current !== null ? `${(current * 3.6).toFixed(1)} km/h` : '--';
-
-  // Sea temp — not always available from marine API
-  el('marSeaTemp').textContent = '--';
-
-  // Swell direction compass + label
-  if (swellDir !== undefined && swellDir !== null) {
-    el('marineNeedle').style.transform = `translateX(-50%) translateY(-100%) rotate(${swellDir}deg)`;
-    el('marSwellDir').textContent = windDir(swellDir);
-  } else {
-    el('marSwellDir').textContent = '--';
-  }
-
-  // Wave direction label
-  el('marWaveDir').textContent = waveDir !== undefined && waveDir !== null ? windDir(waveDir) : '--';
-
-  // Marine verdict
-  const verdict = el('marineVerdict');
-  const vIcon   = el('marineVerdictIcon');
-  const vLabel  = el('marineVerdictLabel');
-  const vReason = el('marineVerdictReason');
-
-  if (waveH === null || waveH === undefined) {
-    verdict.className = 'marine-verdict caution';
-    vIcon.textContent = '🌊';
-    vLabel.textContent = 'No wave data';
-    vReason.textContent = 'Marine data not available — may be out of range.';
-  } else if (waveH >= 2.5) {
-    verdict.className = 'marine-verdict poor';
-    vIcon.textContent = '⛔';
-    vLabel.textContent = 'Rough conditions — small craft warning';
-    vReason.textContent = `Waves at ${waveH.toFixed(1)}m${swellH ? ` with ${swellH.toFixed(1)}m swell` : ''}. Not suitable for small vessels.`;
-  } else if (waveH >= 1.25) {
-    verdict.className = 'marine-verdict caution';
-    vIcon.textContent = '⚠️';
-    vLabel.textContent = 'Moderate conditions — take care';
-    vReason.textContent = `${waveH.toFixed(1)}m waves${swellP ? ` at ${swellP.toFixed(0)}s period` : ''}. Experienced mariners only.`;
-  } else if (waveH >= 0.5) {
-    verdict.className = 'marine-verdict caution';
-    vIcon.textContent = '⛵';
-    vLabel.textContent = 'Slight swell — generally manageable';
-    vReason.textContent = `${waveH.toFixed(1)}m wave height. Suitable for most recreational use with care.`;
-  } else {
-    verdict.className = 'marine-verdict good';
-    vIcon.textContent = '⚓';
-    vLabel.textContent = 'Calm conditions — good on the water';
-    vReason.textContent = `${waveH.toFixed(1)}m waves${swellP ? ` — ${swellP.toFixed(0)}s swell period` : ''}. Excellent conditions for boating.`;
   }
 }
 
